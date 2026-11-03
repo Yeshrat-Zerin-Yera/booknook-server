@@ -30,6 +30,66 @@ router.get("/", async (_req, res) => {
   }
 });
 
+// POST /books - Add a new book
+router.post("/", async (req, res) => {
+  try {
+    const {
+      title,
+      author,
+      category,
+      cover,
+      description,
+    } = req.body;
+
+    // Validate required fields
+    if (
+      !title?.trim() ||
+      !author?.trim() ||
+      !category?.trim() ||
+      !cover?.trim() ||
+      !description?.trim()
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "All book fields are required",
+      });
+      return;
+    }
+
+    const newBook = {
+      title: title.trim(),
+      author: author.trim(),
+      category: category.trim(),
+      cover: cover.trim(),
+      description: description.trim(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const db = getDB();
+
+    const result = await db
+      .collection("books")
+      .insertOne(newBook);
+
+    res.status(201).json({
+      success: true,
+      message: "Book added successfully",
+      data: {
+        _id: result.insertedId,
+        ...newBook,
+      },
+    });
+  } catch (error) {
+    console.error("Error adding book:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to add book",
+    });
+  }
+});
+
 // GET /books/:id - Get one book
 router.get("/:id", async (req, res) => {
   try {
