@@ -161,6 +161,47 @@ router.patch("/:id", async (req, res) => {
     }
 });
 
+// DELETE /books/:id - Delete a book
+router.delete("/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            res.status(400).json({
+                success: false,
+                message: "Invalid book ID",
+            });
+            return;
+        }
+
+        const db = getDB();
+
+        const result = await db.collection("books").deleteOne({
+            _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+            res.status(404).json({
+                success: false,
+                message: "Book not found",
+            });
+            return;
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Book deleted successfully",
+        });
+    } catch (error) {
+        console.error("Error deleting book:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete book",
+        });
+    }
+});
+
 // GET /books/:id - Get one book
 router.get("/:id", async (req, res) => {
     try {
