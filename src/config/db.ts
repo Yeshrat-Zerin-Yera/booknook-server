@@ -11,13 +11,12 @@ if (!MONGODB_URI) {
 
 const client = new MongoClient(MONGODB_URI);
 
-let database: Db;
+// Create the database handle before connecting.
+const database: Db = client.db("booknook");
 
 export async function connectDB(): Promise<Db> {
   try {
     await client.connect();
-
-    database = client.db("booknook");
 
     console.log("MongoDB connected successfully!");
 
@@ -29,9 +28,5 @@ export async function connectDB(): Promise<Db> {
 }
 
 export function getDB(): Db {
-  if (!database) {
-    throw new Error("Database is not connected yet!");
-  }
-
   return database;
 }
