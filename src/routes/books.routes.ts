@@ -6,6 +6,168 @@ import { requireAuth } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
+// Allowed book categories
+const allowedCategories = [
+    "Fiction",
+    "Science",
+    "History",
+    "Kids",
+    "Others",
+] as const;
+
+interface BookFields {
+    title: string;
+    author: string;
+    category: string;
+    cover: string;
+    description: string;
+}
+
+// Validate and clean book input
+function validateBookFields(
+    body: unknown,
+    requireAll: boolean
+): { data?: Partial<BookFields>; error?: string } {
+
+    if (
+        !body ||
+        typeof body !== "object" ||
+        Array.isArray(body)
+    ) {
+        return { error: "Invalid request body" };
+    }
+
+    const input = body as Record<string, unknown>;
+
+    const allowedFields = [
+        "title",
+        "author",
+        "category",
+        "cover",
+        "description",
+    ];
+
+    // Reject unexpected fields
+    const unknownFields = Object.keys(input).filter(
+        (key) => !allowedFields.includes(key)
+    );
+
+    if (unknownFields.length > 0) {
+        return { error: "Unexpected book fields provided" };
+    }
+
+    const updates: Partial<BookFields> = {};
+
+    const fields = [
+        "title",
+        "author",
+        "category",
+        "cover",
+        "description",
+    ] as const;
+
+    for (const field of fields) {
+        const value = input[field];
+
+        // All fields are required when creating a book
+        if (value === undefined) {
+            if (requireAll) {
+                return { error: "All book fields are required" };
+            }
+
+            continue;
+        }
+
+        // Every field must be a string
+        if (typeof value !== "string") {
+            return {
+                error: `${field} must be a string`,
+            };
+        }
+
+        const cleanValue = value.trim();
+
+        if (!cleanValue) {
+            return {
+                error: `${field} cannot be empty`,
+            };
+        }
+
+        // Title validation
+        if (field === "title") {
+            if (cleanValue.length < 2 || cleanValue.length > 120) {
+                return {
+                    error: "Title must be between 2 and 120 characters",
+                };
+            }
+        }
+
+        // Author validation
+        if (field === "author") {
+            if (cleanValue.length < 2 || cleanValue.length > 80) {
+                return {
+                    error: "Author must be between 2 and 80 characters",
+                };
+            }
+        }
+
+        // Category validation
+        if (field === "category") {
+            if (
+                !allowedCategories.includes(
+                    cleanValue as typeof allowedCategories[number]
+                )
+            ) {
+                return {
+                    error: "Invalid book category",
+                };
+            }
+        }
+
+        // Cover URL validation
+        if (field === "cover") {
+            if (cleanValue.length > 2048) {
+                return {
+                    error: "Cover URL is too long",
+                };
+            }
+
+            try {
+                const url = new URL(cleanValue);
+
+                if (
+                    url.protocol !== "http:" &&
+                    url.protocol !== "https:"
+                ) {
+                    return {
+                        error: "Cover must be a valid HTTP or HTTPS URL",
+                    };
+                }
+            } catch {
+                return {
+                    error: "Cover must be a valid URL",
+                };
+            }
+        }
+
+        // Description validation
+        if (field === "description") {
+            if (
+                cleanValue.length < 10 ||
+                cleanValue.length > 1000
+            ) {
+                return {
+                    error: "Description must be between 10 and 1000 characters",
+                };
+            }
+        }
+
+        updates[field] = cleanValue;
+    }
+
+    return { data: updates };
+}
+
 // GET /books - Public: Get all books
 router.get("/", async (_req, res) => {
     try {
@@ -33,7 +195,7 @@ router.get("/", async (_req, res) => {
 });
 
 // GET /books/my-books - Protected: Get logged-in user's books
-// IMPORTANT: Keep this route before GET /:id
+// Keep this route before GET /:id
 router.get("/my-books", requireAuth, async (req, res) => {
     try {
         const userId = req.authUser?.sub;
@@ -68,46 +230,40 @@ router.get("/my-books", requireAuth, async (req, res) => {
     }
 });
 
+
 // POST /books - Protected: Add a new book
 router.post("/", requireAuth, async (req, res) => {
     try {
         const userId = req.authUser?.sub;
+        const userName = req.authUser?.name;
+        const userEmail = req.authUser?.email;
 
-        if (typeof userId !== "string") {
+        if (
+            typeof userId !== "string" ||
+            typeof userName !== "string" ||
+            typeof userEmail !== "string"
+        ) {
             return res.status(401).json({
                 success: false,
                 message: "Authentication required",
             });
         }
 
-        const {
-            title,
-            author,
-            category,
-            cover,
-            description,
-        } = req.body;
+        // Validate all book fields
+        const validation = validateBookFields(req.body, true);
 
-        if (
-            !title?.trim() ||
-            !author?.trim() ||
-            !category?.trim() ||
-            !cover?.trim() ||
-            !description?.trim()
-        ) {
+        if (validation.error || !validation.data) {
             return res.status(400).json({
                 success: false,
-                message: "All book fields are required",
+                message: validation.error,
             });
         }
 
         const newBook = {
-            title: title.trim(),
-            author: author.trim(),
-            category: category.trim(),
-            cover: cover.trim(),
-            description: description.trim(),
+            ...validation.data,
             createdBy: userId,
+            createdByName: userName,
+            createdByEmail: userEmail,
             createdAt: new Date(),
             updatedAt: new Date(),
         };
@@ -136,12 +292,16 @@ router.post("/", requireAuth, async (req, res) => {
     }
 });
 
+
 // PATCH /books/:id - Protected: Update only your own book
 router.patch("/:id", requireAuth, async (req, res) => {
     try {
         const id = req.params.id;
 
-        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+        if (
+            typeof id !== "string" ||
+            !/^[0-9a-fA-F]{24}$/.test(id)
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
@@ -157,21 +317,17 @@ router.patch("/:id", requireAuth, async (req, res) => {
             });
         }
 
-        const {
-            title,
-            author,
-            category,
-            cover,
-            description,
-        } = req.body;
+        // Validate only the fields being updated
+        const validation = validateBookFields(req.body, false);
 
-        const updates: Record<string, string> = {};
+        if (validation.error || !validation.data) {
+            return res.status(400).json({
+                success: false,
+                message: validation.error,
+            });
+        }
 
-        if (title !== undefined) updates.title = title.trim();
-        if (author !== undefined) updates.author = author.trim();
-        if (category !== undefined) updates.category = category.trim();
-        if (cover !== undefined) updates.cover = cover.trim();
-        if (description !== undefined) updates.description = description.trim();
+        const updates = validation.data;
 
         if (Object.keys(updates).length === 0) {
             return res.status(400).json({
@@ -221,7 +377,10 @@ router.delete("/:id", requireAuth, async (req, res) => {
     try {
         const id = req.params.id;
 
-        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+        if (
+            typeof id !== "string" ||
+            !/^[0-9a-fA-F]{24}$/.test(id)
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
@@ -270,7 +429,10 @@ router.get("/:id", async (req, res) => {
     try {
         const id = req.params.id;
 
-        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+        if (
+            typeof id !== "string" ||
+            !/^[0-9a-fA-F]{24}$/.test(id)
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
