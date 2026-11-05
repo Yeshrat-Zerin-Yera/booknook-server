@@ -17,7 +17,7 @@ export function createAuth() {
 
     emailAndPassword: {
       enabled: true,
-      autoSignIn: false,
+      autoSignIn: true,
       minPasswordLength: 6,
     },
 
