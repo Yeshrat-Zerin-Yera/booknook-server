@@ -25,7 +25,7 @@ router.post("/", requireAuth, async (req, res) => {
 
         if (
             typeof bookId !== "string" ||
-            !ObjectId.isValid(bookId)
+            !/^[0-9a-fA-F]{24}$/.test(bookId)
         ) {
             return res.status(400).json({
                 success: false,
@@ -49,8 +49,22 @@ router.post("/", requireAuth, async (req, res) => {
         const booksCollection = db.collection("books");
         const borrowsCollection = db.collection("borrows");
 
+        // Prevent the same user from having two active
+        // borrow records for the same book.
+        await borrowsCollection.createIndex(
+            { userId: 1, bookId: 1 },
+            {
+                unique: true,
+                partialFilterExpression: {
+                    returnedAt: null,
+                },
+            }
+        );
+
+        const bookObjectId = new ObjectId(bookId);
+
         const book = await booksCollection.findOne({
-            _id: new ObjectId(bookId),
+            _id: bookObjectId,
         });
 
         if (!book) {
@@ -60,6 +74,7 @@ router.post("/", requireAuth, async (req, res) => {
             });
         }
 
+        // Friendly duplicate-borrow check.
         const existingBorrow = await borrowsCollection.findOne({
             userId,
             bookId,
@@ -70,6 +85,25 @@ router.post("/", requireAuth, async (req, res) => {
             return res.status(409).json({
                 success: false,
                 message: "You have already borrowed this book",
+            });
+        }
+
+        // Atomically decrease copies only when copies > 0.
+        const stockUpdate = await booksCollection.updateOne(
+            {
+                _id: bookObjectId,
+                copies: { $gt: 0 },
+            },
+            {
+                $inc: { copies: -1 },
+                $set: { updatedAt: new Date() },
+            }
+        );
+
+        if (stockUpdate.modifiedCount === 0) {
+            return res.status(409).json({
+                success: false,
+                message: "This book is not available right now",
             });
         }
 
@@ -91,16 +125,38 @@ router.post("/", requireAuth, async (req, res) => {
             createdAt: new Date(),
         };
 
-        const result = await borrowsCollection.insertOne(newBorrow);
+        try {
+            const result = await borrowsCollection.insertOne(newBorrow);
 
-        return res.status(201).json({
-            success: true,
-            message: "Book borrowed successfully",
-            data: {
-                _id: result.insertedId,
-                ...newBorrow,
-            },
-        });
+            return res.status(201).json({
+                success: true,
+                message: "Book borrowed successfully",
+                data: {
+                    _id: result.insertedId,
+                    ...newBorrow,
+                },
+            });
+        } catch (insertError) {
+            // Restore the copy if creating the borrow record fails.
+            await booksCollection.updateOne(
+                { _id: bookObjectId },
+                { $inc: { copies: 1 } }
+            );
+
+            if (
+                typeof insertError === "object" &&
+                insertError !== null &&
+                "code" in insertError &&
+                insertError.code === 11000
+            ) {
+                return res.status(409).json({
+                    success: false,
+                    message: "You have already borrowed this book",
+                });
+            }
+
+            throw insertError;
+        }
     } catch (error) {
         console.error("Error borrowing book:", error);
 
@@ -159,7 +215,10 @@ router.delete("/:id", requireAuth, async (req, res) => {
             });
         }
 
-        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+        if (
+            typeof id !== "string" ||
+            !/^[0-9a-fA-F]{24}$/.test(id)
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid borrow record ID",
@@ -167,16 +226,55 @@ router.delete("/:id", requireAuth, async (req, res) => {
         }
 
         const db = getDB();
+        const borrowsCollection = db.collection("borrows");
+        const booksCollection = db.collection("books");
 
-        const result = await db.collection("borrows").deleteOne({
-            _id: new ObjectId(id),
+        const borrowObjectId = new ObjectId(id);
+
+        // Find this user's borrow record.
+        const borrow = await borrowsCollection.findOne({
+            _id: borrowObjectId,
             userId,
         });
 
-        if (result.deletedCount === 0) {
+        if (!borrow) {
             return res.status(404).json({
                 success: false,
                 message: "Borrow record not found",
+            });
+        }
+
+        // Delete only one matching record.
+        const deleteResult = await borrowsCollection.deleteOne({
+            _id: borrowObjectId,
+            userId,
+        });
+
+        if (deleteResult.deletedCount === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Borrow record not found",
+            });
+        }
+
+        // Restore one available copy.
+        const stockUpdate = await booksCollection.updateOne(
+            {
+                _id: new ObjectId(borrow.bookId),
+            },
+            {
+                $inc: { copies: 1 },
+                $set: { updatedAt: new Date() },
+            }
+        );
+
+        if (stockUpdate.matchedCount === 0) {
+            // Restore the borrow record if its book no longer exists.
+            await borrowsCollection.insertOne(borrow);
+
+            return res.status(404).json({
+                success: false,
+                message: "Book not found. Return could not be completed.",
             });
         }
 
@@ -193,6 +291,5 @@ router.delete("/:id", requireAuth, async (req, res) => {
         });
     }
 });
-
 
 export default router;

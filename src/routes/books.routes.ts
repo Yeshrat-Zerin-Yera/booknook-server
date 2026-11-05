@@ -21,6 +21,7 @@ interface BookFields {
     category: string;
     cover: string;
     description: string;
+    copies: number;
 }
 
 // Validate and clean book input
@@ -45,6 +46,7 @@ function validateBookFields(
         "category",
         "cover",
         "description",
+        "copies",
     ];
 
     // Reject unexpected fields
@@ -163,6 +165,28 @@ function validateBookFields(
         }
 
         updates[field] = cleanValue;
+    }
+
+    // Validate total copies
+    const copies = input.copies;
+
+    if (copies === undefined) {
+        if (requireAll) {
+            return { error: "Total copies are required" };
+        }
+    } else {
+        if (
+            typeof copies !== "number" ||
+            !Number.isInteger(copies) ||
+            copies < 1 ||
+            copies > 1000
+        ) {
+            return {
+                error: "Total copies must be a whole number between 1 and 1000",
+            };
+        }
+
+        updates.copies = copies;
     }
 
     return { data: updates };
