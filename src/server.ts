@@ -6,6 +6,7 @@ import { connectDB } from "./config/db.js";
 import booksRouter from "./routes/books.routes.js";
 import { toNodeHandler } from "better-auth/node";
 import { createAuth } from "./lib/auth.js";
+import borrowsRouter from "./routes/borrows.routes.js";
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ async function startServer() {
 
     // 5. Register Books API
     app.use("/books", booksRouter);
+    app.use("/borrows", borrowsRouter);
 
     // 6. Health check routes
     app.get("/", (_req, res) => {

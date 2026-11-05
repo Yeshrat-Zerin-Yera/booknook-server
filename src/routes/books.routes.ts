@@ -1,10 +1,12 @@
+
 import { Router } from "express";
 import { ObjectId } from "mongodb";
 import { getDB } from "../config/db.js";
+import { requireAuth } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
-// GET /books - Get all books
+// GET /books - Public: Get all books
 router.get("/", async (_req, res) => {
     try {
         const db = getDB();
@@ -30,9 +32,54 @@ router.get("/", async (_req, res) => {
     }
 });
 
-// POST /books - Add a new book
-router.post("/", async (req, res) => {
+// GET /books/my-books - Protected: Get logged-in user's books
+// IMPORTANT: Keep this route before GET /:id
+router.get("/my-books", requireAuth, async (req, res) => {
     try {
+        const userId = req.authUser?.sub;
+
+        if (typeof userId !== "string") {
+            return res.status(401).json({
+                success: false,
+                message: "Authentication required",
+            });
+        }
+
+        const db = getDB();
+
+        const books = await db
+            .collection("books")
+            .find({ createdBy: userId })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        res.status(200).json({
+            success: true,
+            count: books.length,
+            data: books,
+        });
+    } catch (error) {
+        console.error("Error fetching user's books:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch your books",
+        });
+    }
+});
+
+// POST /books - Protected: Add a new book
+router.post("/", requireAuth, async (req, res) => {
+    try {
+        const userId = req.authUser?.sub;
+
+        if (typeof userId !== "string") {
+            return res.status(401).json({
+                success: false,
+                message: "Authentication required",
+            });
+        }
+
         const {
             title,
             author,
@@ -41,7 +88,6 @@ router.post("/", async (req, res) => {
             description,
         } = req.body;
 
-        // Validate required fields
         if (
             !title?.trim() ||
             !author?.trim() ||
@@ -49,11 +95,10 @@ router.post("/", async (req, res) => {
             !cover?.trim() ||
             !description?.trim()
         ) {
-            res.status(400).json({
+            return res.status(400).json({
                 success: false,
                 message: "All book fields are required",
             });
-            return;
         }
 
         const newBook = {
@@ -62,6 +107,7 @@ router.post("/", async (req, res) => {
             category: category.trim(),
             cover: cover.trim(),
             description: description.trim(),
+            createdBy: userId,
             createdAt: new Date(),
             updatedAt: new Date(),
         };
@@ -90,17 +136,25 @@ router.post("/", async (req, res) => {
     }
 });
 
-// PATCH /books/:id - Update a book
-router.patch("/:id", async (req, res) => {
+// PATCH /books/:id - Protected: Update only your own book
+router.patch("/:id", requireAuth, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = req.params.id;
 
-        if (!ObjectId.isValid(id)) {
-            res.status(400).json({
+        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+            return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
             });
-            return;
+        }
+
+        const userId = req.authUser?.sub;
+
+        if (typeof userId !== "string") {
+            return res.status(401).json({
+                success: false,
+                message: "Authentication required",
+            });
         }
 
         const {
@@ -120,17 +174,19 @@ router.patch("/:id", async (req, res) => {
         if (description !== undefined) updates.description = description.trim();
 
         if (Object.keys(updates).length === 0) {
-            res.status(400).json({
+            return res.status(400).json({
                 success: false,
                 message: "No fields provided to update",
             });
-            return;
         }
 
         const db = getDB();
 
         const result = await db.collection("books").updateOne(
-            { _id: new ObjectId(id) },
+            {
+                _id: new ObjectId(id),
+                createdBy: userId,
+            },
             {
                 $set: {
                     ...updates,
@@ -140,11 +196,10 @@ router.patch("/:id", async (req, res) => {
         );
 
         if (result.matchedCount === 0) {
-            res.status(404).json({
+            return res.status(404).json({
                 success: false,
-                message: "Book not found",
+                message: "Book not found or you do not have permission to update it",
             });
-            return;
         }
 
         res.status(200).json({
@@ -161,31 +216,39 @@ router.patch("/:id", async (req, res) => {
     }
 });
 
-// DELETE /books/:id - Delete a book
-router.delete("/:id", async (req, res) => {
+// DELETE /books/:id - Protected: Delete only your own book
+router.delete("/:id", requireAuth, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = req.params.id;
 
-        if (!ObjectId.isValid(id)) {
-            res.status(400).json({
+        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+            return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
             });
-            return;
+        }
+
+        const userId = req.authUser?.sub;
+
+        if (typeof userId !== "string") {
+            return res.status(401).json({
+                success: false,
+                message: "Authentication required",
+            });
         }
 
         const db = getDB();
 
         const result = await db.collection("books").deleteOne({
             _id: new ObjectId(id),
+            createdBy: userId,
         });
 
         if (result.deletedCount === 0) {
-            res.status(404).json({
+            return res.status(404).json({
                 success: false,
-                message: "Book not found",
+                message: "Book not found or you do not have permission to delete it",
             });
-            return;
         }
 
         res.status(200).json({
@@ -202,17 +265,16 @@ router.delete("/:id", async (req, res) => {
     }
 });
 
-// GET /books/:id - Get one book
+// GET /books/:id - Public: Get one book
 router.get("/:id", async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = req.params.id;
 
-        if (!ObjectId.isValid(id)) {
-            res.status(400).json({
+        if (typeof id !== "string" || !ObjectId.isValid(id)) {
+            return res.status(400).json({
                 success: false,
                 message: "Invalid book ID",
             });
-            return;
         }
 
         const db = getDB();
@@ -222,11 +284,10 @@ router.get("/:id", async (req, res) => {
         });
 
         if (!book) {
-            res.status(404).json({
+            return res.status(404).json({
                 success: false,
                 message: "Book not found",
             });
-            return;
         }
 
         res.status(200).json({

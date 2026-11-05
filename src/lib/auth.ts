@@ -1,4 +1,6 @@
+
 import { betterAuth } from "better-auth";
+import { jwt } from "better-auth/plugins";
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
 import { getDB } from "../config/db.js";
 
@@ -16,5 +18,24 @@ export function createAuth() {
     emailAndPassword: {
       enabled: true,
     },
+
+    socialProviders: {
+      google: {
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      },
+    },
+
+    plugins: [
+      jwt({
+        jwt: {
+          definePayload: ({ user }) => ({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+          }),
+        },
+      }),
+    ],
   });
 }
