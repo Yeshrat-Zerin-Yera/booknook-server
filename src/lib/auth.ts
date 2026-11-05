@@ -1,4 +1,3 @@
-
 import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
@@ -14,6 +13,17 @@ export function createAuth() {
     trustedOrigins: [
       process.env.CLIENT_URL!,
     ],
+
+    // Allow secure cookies between the Vercel frontend
+    // and Render backend.
+    advanced: {
+      useSecureCookies: true,
+      defaultCookieAttributes: {
+        sameSite: "none",
+        secure: true,
+        httpOnly: true,
+      },
+    },
 
     emailAndPassword: {
       enabled: true,
